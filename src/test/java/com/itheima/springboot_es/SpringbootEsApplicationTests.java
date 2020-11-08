@@ -4,6 +4,7 @@ package com.itheima.springboot_es;
 import com.alibaba.fastjson.JSON;
 import com.itheima.springboot_es.domain.Goods;
 import com.itheima.springboot_es.mapper.GoodsMapper;
+import org.apache.lucene.index.Term;
 import org.elasticsearch.action.bulk.BulkRequest;
 import org.elasticsearch.action.bulk.BulkResponse;
 import org.elasticsearch.action.delete.DeleteRequest;
@@ -17,12 +18,20 @@ import org.elasticsearch.client.RestHighLevelClient;
 import org.elasticsearch.client.indices.CreateIndexRequest;
 import org.elasticsearch.client.indices.CreateIndexResponse;
 
+import org.elasticsearch.common.text.Text;
 import org.elasticsearch.common.xcontent.XContentType;
 import org.elasticsearch.index.query.*;
 import org.elasticsearch.rest.RestStatus;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.SearchHits;
+import org.elasticsearch.search.aggregations.Aggregation;
+import org.elasticsearch.search.aggregations.AggregationBuilder;
+import org.elasticsearch.search.aggregations.AggregationBuilders;
+import org.elasticsearch.search.aggregations.Aggregations;
+import org.elasticsearch.search.aggregations.bucket.terms.Terms;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
+import org.elasticsearch.search.fetch.subphase.highlight.HighlightBuilder;
+import org.elasticsearch.search.fetch.subphase.highlight.HighlightField;
 import org.elasticsearch.search.sort.SortOrder;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -365,4 +374,178 @@ class SpringbootEsApplicationTests {
 		getResult(hits);
 	}
 
+	//多条件查询
+	@Test
+	public void testQueryStringQuery() throws IOException {
+		//2.创建查询请求对象,指定查询结果的索引名称
+		SearchRequest searchRequest = new SearchRequest("goods");
+		//4.创建查询条件构造器 SearchSourceBuilder
+		SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+		//6.查询条件
+		//查询所有文档
+		QueryStringQueryBuilder query = QueryBuilders.queryStringQuery("华为手机").field("title").field("categoryName").field("brandName").defaultOperator(Operator.AND);
+		//5.指定查询条件
+		searchSourceBuilder.query(query);
+		//3.添加查询条件构建器 SearchSourceBuilder
+		searchRequest.source(searchSourceBuilder);
+		//8.添加分页信息
+		searchSourceBuilder.from(0);
+		searchSourceBuilder.size(100);
+		//1.查询,获取结果
+		SearchResponse search = client.search(searchRequest, RequestOptions.DEFAULT);
+		//7.获取名中对象
+		SearchHits hits = search.getHits();
+		//获取总记录条数
+		long value = hits.getTotalHits().value;
+		System.out.println("总记录:" + value);
+		getResult(hits);
+	}
+
+	/**
+	 * 布尔查询：boolQuery
+	 * 1. 查询品牌名称为:华为
+	 * 2. 查询标题包含：手机
+	 * 3. 查询价格在：2000-3000
+	 */
+	@Test
+	public void testBoolQuery() throws IOException {
+		//2.创建查询请求对象,指定查询结果的索引名称
+		SearchRequest searchRequest = new SearchRequest("goods");
+		//4.创建查询条件构造器 SearchSourceBuilder
+		SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+		//6.查询条件
+		//查询所有文档
+		BoolQueryBuilder query = QueryBuilders.boolQuery();
+		TermQueryBuilder termQuery = QueryBuilders.termQuery("brandName", "华为");
+		query.must(termQuery);
+		MatchQueryBuilder matchQuery = QueryBuilders.matchQuery("title", "手机");
+		query.filter(matchQuery);
+		RangeQueryBuilder rangeQuery = QueryBuilders.rangeQuery("price");
+		rangeQuery.gte(2000);
+		rangeQuery.lte(3000);
+		query.filter(rangeQuery);
+		//5.指定查询条件
+		searchSourceBuilder.query(query);
+		//3.添加查询条件构建器 SearchSourceBuilder
+		searchRequest.source(searchSourceBuilder);
+		//8.添加分页信息
+		searchSourceBuilder.from(0);
+		searchSourceBuilder.size(100);
+		//1.查询,获取结果
+		SearchResponse search = client.search(searchRequest, RequestOptions.DEFAULT);
+		//7.获取名中对象
+		SearchHits hits = search.getHits();
+		//获取总记录条数
+		long value = hits.getTotalHits().value;
+		System.out.println("总记录:" + value);
+		getResult(hits);
+	}
+
+	//聚合查询
+	@Test
+	public void testAggQuery() throws IOException {
+		//2.创建查询请求对象,指定查询结果的索引名称
+		SearchRequest searchRequest = new SearchRequest("goods");
+		//4.创建查询条件构造器 SearchSourceBuilder
+		SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+		//6.查询条件
+		//查询所有文档
+		//1.1. 查询title包含手机的数据
+		//MatchQueryBuilder query = QueryBuilders.matchQuery("title", "手机");
+		//searchSourceBuilder.query(query);
+		//1.2. 查询品牌列表
+		/**
+		 * 参数:
+		 * 1.自定义的名称,将来用于获取数据
+		 * 2.分组字段
+		 */
+		AggregationBuilder agg = AggregationBuilders.terms("goods_brands").field("brandName");
+		searchSourceBuilder.aggregation(agg);
+		//3.添加查询条件构建器 SearchSourceBuilder
+		searchRequest.source(searchSourceBuilder);
+		//8.添加分页信息
+		searchSourceBuilder.from(0);
+		searchSourceBuilder.size(100);
+		//1.查询,获取结果
+		SearchResponse search = client.search(searchRequest, RequestOptions.DEFAULT);
+		//7.获取名中对象
+		SearchHits hits = search.getHits();
+		//获取总记录条数
+		long value = hits.getTotalHits().value;
+		System.out.println("总记录:" + value);
+		ArrayList<Goods> goodsArrayList = new ArrayList<>();
+		SearchHit[] hitsHits = hits.getHits();
+		Aggregations aggregations = search.getAggregations();
+		Map<String, Aggregation> aggregationMap = aggregations.asMap();
+		Terms brands = (Terms) aggregationMap.get("goods_brands");
+		List<? extends Terms.Bucket> buckets = brands.getBuckets();
+		List list = new ArrayList();
+		for (Terms.Bucket bucket : buckets) {
+			Object key = bucket.getKey();
+			list.add(key);
+		}
+		for (Object o : list) {
+			System.out.println(o);
+		}
+	}
+
+	/**
+	 * 高亮查询
+	 * 1.设置高亮
+	 *   高亮字段
+	 *   前缀
+	 *   后缀
+	 * 2.将高亮了的字段数据,替换原有的数据
+	 * @throws IOException
+	 */
+	@Test
+	public void testHighLightQuery() throws IOException {
+		//2.创建查询请求对象,指定查询结果的索引名称
+		SearchRequest searchRequest = new SearchRequest("goods");
+		//4.创建查询条件构造器 SearchSourceBuilder
+		SearchSourceBuilder searchSourceBuilder = new SearchSourceBuilder();
+		//6.查询条件
+		//查询title包含手机的数据
+		QueryBuilder query = QueryBuilders.matchQuery("title","华为手机");
+		//5.指定查询条件
+		searchSourceBuilder.query(query);
+		//设置高亮
+		HighlightBuilder highlightBuilder = new HighlightBuilder();
+		//设置高亮字段
+		highlightBuilder.field("title");
+		highlightBuilder.preTags("<font color='red'>");
+		highlightBuilder.postTags("</font>");
+
+		searchSourceBuilder.highlighter(highlightBuilder);
+		//3.添加查询条件构建器 SearchSourceBuilder
+		searchRequest.source(searchSourceBuilder);
+		//8.添加分页信息
+		searchSourceBuilder.from(0);
+		searchSourceBuilder.size(100);
+		//1.查询,获取结果
+		SearchResponse search = client.search(searchRequest, RequestOptions.DEFAULT);
+		//7.获取名中对象
+		SearchHits hits = search.getHits();
+		//获取总记录条数
+		long value = hits.getTotalHits().value;
+		System.out.println("总记录:" + value);
+		ArrayList<Goods> goodsArrayList = new ArrayList<>();
+		SearchHit[] hitsHits = hits.getHits();
+		for (SearchHit hitsHit : hitsHits) {
+			//获取json字符串
+			String sourceAsString = hitsHit.getSourceAsString();
+			//转化为java对象
+			Goods goods = JSON.parseObject(sourceAsString, Goods.class);
+			//获取高亮结果,替换goods中的title
+			Map<String, HighlightField> highlightFields = hitsHit.getHighlightFields();
+			HighlightField highlightField = highlightFields.get("title");
+			Text[] fragments = highlightField.fragments();
+			//替换
+			goods.setTitle(fragments[0].toString());
+			goodsArrayList.add(goods);
+		}
+		for (Goods goods : goodsArrayList) {
+			System.out.println(goods);
+		}
+	}
 }
